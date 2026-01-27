@@ -33,7 +33,23 @@ def load_twitch_data():
     """Load and cache the Twitch dataset from HuggingFace"""
     try:
         dataset = load_dataset("lparkourer10/twitch_chat")
-        messages = [msg.get('message', msg.get('text', str(msg))) for msg in dataset['train']]
+        messages = []
+        for msg in dataset['train']:
+            # Handle different message formats
+            if isinstance(msg, dict):
+                # Try different keys
+                message_text = msg.get('message') or msg.get('Message') or msg.get('text') or msg.get('Text') or str(
+                    msg)
+            else:
+                message_text = str(msg)
+
+            # Clean up if it's still a dict representation
+            if isinstance(message_text, dict):
+                message_text = message_text.get('message') or message_text.get('Message') or str(message_text)
+
+            if message_text:
+                messages.append(message_text)
+
         return messages
     except Exception as e:
         st.error(f"Error loading dataset: {e}")
