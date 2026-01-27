@@ -96,7 +96,7 @@ def save_label_to_sheet(sheet, message_id, message, sentiment, confidence, label
 
 # title and description
 st.title("Twitch Chat Sentiment Labeler")
-st.markdown("Label Twitch chat messages by sentiment. Help train our ML model!")
+st.markdown("Label Twitch chat messages by sentiment.")
 
 # sidebar
 with st.sidebar:
