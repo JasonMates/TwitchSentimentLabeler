@@ -1,4 +1,3 @@
-# Save this as labeler_app.py
 import streamlit as st
 import pandas as pd
 import random
@@ -8,10 +7,9 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 
-# Page config
 st.set_page_config(page_title="Twitch Sentiment Labeler", layout="centered")
 
-# Initialize session state
+# init session state
 if 'current_message' not in st.session_state:
     st.session_state.current_message = None
 if 'message_index' not in st.session_state:
@@ -28,7 +26,7 @@ if 'sheet' not in st.session_state:
     st.session_state.sheet = None
 
 
-# Load dataset once
+# load dataset
 @st.cache_resource
 def load_twitch_data():
     """Load and cache the Twitch dataset from HuggingFace"""
@@ -41,12 +39,12 @@ def load_twitch_data():
         return []
 
 
-# Google Sheets functions
+# google sheets
 @st.cache_resource
 def init_google_sheets():
     """Initialize Google Sheets connection"""
     try:
-        # Get credentials from Streamlit secrets
+        # get credentials
         creds_dict = st.secrets["google_sheets"]
 
         scope = [
@@ -57,7 +55,7 @@ def init_google_sheets():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
 
-        # Open the spreadsheet
+        # open spreadsheet
         spreadsheet = client.open('Twitch_Sentiment_Labels')
         sheet = spreadsheet.sheet1
 
@@ -68,7 +66,7 @@ def init_google_sheets():
 
 
 def load_labels_from_sheet(sheet):
-    """Load all labels from Google Sheet"""
+    """load labels from sheet"""
     try:
         records = sheet.get_all_records()
         if records:
@@ -80,7 +78,7 @@ def load_labels_from_sheet(sheet):
 
 
 def save_label_to_sheet(sheet, message_id, message, sentiment, confidence, labeler_name, timestamp):
-    """Save a single label to Google Sheet"""
+    """save a single label to sheet"""
     try:
         sheet.append_row([
             message_id,
@@ -96,18 +94,18 @@ def save_label_to_sheet(sheet, message_id, message, sentiment, confidence, label
         return False
 
 
-# Title and description
+# title and description
 st.title("🎮 Twitch Chat Sentiment Labeler")
 st.markdown("Label Twitch chat messages by sentiment. Help train our ML model!")
 
-# Sidebar - Configuration
+# sidebar
 with st.sidebar:
     st.header("⚙️ Settings")
     labeler_name = st.text_input("Your Name:", placeholder="e.g., Student 1")
 
     st.divider()
 
-    # Google Sheets Connection
+    # google sheets connection
     st.subheader("📊 Google Sheets Setup")
 
     if st.button("🔗 Connect to Google Sheets", use_container_width=True):
@@ -123,7 +121,7 @@ with st.sidebar:
     if st.session_state.sheet_connected:
         st.success("✅ Google Sheets connected")
 
-        # Show current stats from sheet
+        # show current stats from sheet
         if st.button("📂 Refresh Stats from Sheet", use_container_width=True):
             with st.spinner("Loading labels..."):
                 df = load_labels_from_sheet(st.session_state.sheet)
@@ -136,7 +134,7 @@ with st.sidebar:
 
     st.divider()
 
-    # Load dataset
+    # load dataset
     if st.button("📥 Load Twitch Dataset", use_container_width=True):
         with st.spinner("Loading Twitch dataset..."):
             messages = load_twitch_data()
@@ -193,7 +191,7 @@ with st.sidebar:
         - Signs: Informational, greetings, generic
         """)
 
-# Main content
+# main content
 if not st.session_state.dataset_loaded:
     st.warning("⚠️ Click '📥 Load Twitch Dataset' in the sidebar to begin!")
 elif not st.session_state.sheet_connected:
@@ -212,7 +210,7 @@ else:
             st.session_state.current_message = None
             st.session_state.message_index = None
 
-    # Display current message
+    # display current message
     if st.session_state.current_message:
         st.divider()
 
@@ -280,7 +278,7 @@ else:
         if st.session_state.dataset_loaded and st.session_state.sheet_connected:
             st.info("👈 Click 'Load Random Message' to start labeling!")
 
-    # Progress tracker
+    # progress tracker
     st.divider()
     st.markdown("### 📈 Labeling Progress (This Session)")
 
@@ -295,7 +293,7 @@ else:
 
     progress_bar = st.progress(min(st.session_state.labeled_count / 500, 1.0))
 
-    # Show all labeled data from sheet
+    # show all labeled data from sheet
     st.divider()
     st.markdown("### 💾 All Labels (From Google Sheets)")
 
@@ -306,7 +304,7 @@ else:
             if not df_all.empty:
                 st.success(f"✅ Loaded {len(df_all)} total labels")
 
-                # Overall stats
+                # overall stats
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric("Total Labels", len(df_all))
@@ -317,23 +315,23 @@ else:
                 with col3:
                     st.metric("Team Members", df_all['labeled_by'].nunique())
 
-                # Sentiment distribution
+                # sentiment distribution
                 st.subheader("Sentiment Distribution (All)")
                 sentiment_counts = df_all['sentiment'].value_counts()
                 st.bar_chart(sentiment_counts)
 
-                # By labeler
+                # by labeler
                 st.subheader("Labels by Team Member")
                 labeler_counts = df_all['labeled_by'].value_counts()
                 st.bar_chart(labeler_counts)
 
-                # Recent labels
+                # recent labels
                 st.subheader("Recent Labels (Latest 15)")
                 st.dataframe(df_all.tail(15).iloc[::-1], use_container_width=True)
             else:
                 st.info("No labels yet. Start labeling!")
 
-# Footer
+# footer
 st.divider()
 st.markdown("""
 <div style='text-align: center; color: gray; font-size: 12px;'>
