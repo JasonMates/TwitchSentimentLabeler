@@ -1,13 +1,17 @@
+# Save this as labeler_app.py
 import streamlit as st
 import pandas as pd
 import random
 from datetime import datetime
 from datasets import load_dataset
-import os
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import json
 
+# Page config
 st.set_page_config(page_title="Twitch Sentiment Labeler", layout="centered")
 
-# init session state
+# Initialize session state
 if 'current_message' not in st.session_state:
     st.session_state.current_message = None
 if 'message_index' not in st.session_state:
@@ -18,15 +22,18 @@ if 'dataset_loaded' not in st.session_state:
     st.session_state.dataset_loaded = False
 if 'messages' not in st.session_state:
     st.session_state.messages = []
+if 'sheet_connected' not in st.session_state:
+    st.session_state.sheet_connected = False
+if 'sheet' not in st.session_state:
+    st.session_state.sheet = None
 
 
-# load dataset
+# Load dataset once
 @st.cache_resource
 def load_twitch_data():
-    """load and cache the Twitch dataset from huggingface"""
+    """Load and cache the Twitch dataset from HuggingFace"""
     try:
         dataset = load_dataset("lparkourer10/twitch_chat")
-        # extract just the message text from the dataset
         messages = [msg.get('message', msg.get('text', str(msg))) for msg in dataset['train']]
         return messages
     except Exception as e:
@@ -34,9 +41,64 @@ def load_twitch_data():
         return []
 
 
-# title and description
-st.title("Twitch Chat Sentiment Labeler")
-st.markdown("Label Twitch chat messages by sentiment.")
+# Google Sheets functions
+@st.cache_resource
+def init_google_sheets():
+    """Initialize Google Sheets connection"""
+    try:
+        # Get credentials from Streamlit secrets
+        creds_dict = st.secrets["google_sheets"]
+
+        scope = [
+            'https://spreadsheets.google.com/feeds',
+            'https://www.googleapis.com/auth/drive'
+        ]
+
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+
+        # Open the spreadsheet
+        spreadsheet = client.open('Twitch_Sentiment_Labels')
+        sheet = spreadsheet.sheet1
+
+        return sheet, True
+    except Exception as e:
+        st.error(f"❌ Google Sheets connection failed: {e}")
+        return None, False
+
+
+def load_labels_from_sheet(sheet):
+    """Load all labels from Google Sheet"""
+    try:
+        records = sheet.get_all_records()
+        if records:
+            return pd.DataFrame(records)
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error loading labels: {e}")
+        return pd.DataFrame()
+
+
+def save_label_to_sheet(sheet, message_id, message, sentiment, confidence, labeler_name, timestamp):
+    """Save a single label to Google Sheet"""
+    try:
+        sheet.append_row([
+            message_id,
+            message,
+            sentiment,
+            confidence,
+            labeler_name,
+            timestamp
+        ])
+        return True
+    except Exception as e:
+        st.error(f"Error saving to sheet: {e}")
+        return False
+
+
+# Title and description
+st.title("🎮 Twitch Chat Sentiment Labeler")
+st.markdown("Label Twitch chat messages by sentiment. Help train our ML model!")
 
 # Sidebar - Configuration
 with st.sidebar:
@@ -45,8 +107,37 @@ with st.sidebar:
 
     st.divider()
 
-    # load dataset info
-    if st.button("📥 Load Dataset", use_container_width=True):
+    # Google Sheets Connection
+    st.subheader("📊 Google Sheets Setup")
+
+    if st.button("🔗 Connect to Google Sheets", use_container_width=True):
+        with st.spinner("Connecting to Google Sheets..."):
+            sheet, connected = init_google_sheets()
+            if connected:
+                st.session_state.sheet = sheet
+                st.session_state.sheet_connected = True
+                st.success("✅ Connected to Google Sheets!")
+            else:
+                st.session_state.sheet_connected = False
+
+    if st.session_state.sheet_connected:
+        st.success("✅ Google Sheets connected")
+
+        # Show current stats from sheet
+        if st.button("📂 Refresh Stats from Sheet", use_container_width=True):
+            with st.spinner("Loading labels..."):
+                df = load_labels_from_sheet(st.session_state.sheet)
+                if not df.empty:
+                    df_user = df[df['labeled_by'] == labeler_name] if labeler_name else df
+                    st.metric("Your Labels", len(df_user))
+                    st.metric("Total Labels", len(df))
+    else:
+        st.warning("⚠️ Not connected to Google Sheets yet")
+
+    st.divider()
+
+    # Load dataset
+    if st.button("📥 Load Twitch Dataset", use_container_width=True):
         with st.spinner("Loading Twitch dataset..."):
             messages = load_twitch_data()
             if messages:
@@ -59,46 +150,54 @@ with st.sidebar:
 
     st.divider()
     st.subheader("📖 Sentiment Guide")
-    with st.expander("Excitement"):
+
+    with st.expander("😄 Excitement"):
         st.write("""
         **Positive emotion about gameplay**
         - Examples: POGGERS, LETS GO, CLUTCH, HOLY
         - Signs: Caps lock, !, positive gaming emotes
         """)
-    with st.expander("Frustration"):
+
+    with st.expander("😠 Frustration"):
         st.write("""
         **Negative emotion, disappointment**
         - Examples: wtf, trash, ff15, throw
         - Signs: Curse words, negative words, ?
         """)
-    with st.expander("Humor"):
+
+    with st.expander("😂 Humor"):
         st.write("""
         **Jokes, memes, sarcasm, playfulness**
         - Examples: KEKW, copypasta, laugh emotes
         - Signs: Laugh emotes, joke structure, sarcasm
         """)
-    with st.expander("Confusion"):
+
+    with st.expander("❓ Confusion"):
         st.write("""
         **Questions, not understanding**
         - Examples: what happened?, ???, how?
         - Signs: Question marks, confusion emotes
         """)
-    with st.expander("Boredom"):
+
+    with st.expander("😴 Boredom"):
         st.write("""
         **Lack of interest, slow pace**
         - Examples: ResidentSleeper, zzzz, boring
         - Signs: Sleep emotes, pace complaints
         """)
-    with st.expander("Neutral"):
+
+    with st.expander("😐 Neutral"):
         st.write("""
         **Everything else**
         - Examples: hi, gg, nice, general chat
         - Signs: Informational, greetings, generic
         """)
 
-# main content
+# Main content
 if not st.session_state.dataset_loaded:
-    st.warning("⚠️ Click 'Load Dataset' in the sidebar to begin!")
+    st.warning("⚠️ Click '📥 Load Twitch Dataset' in the sidebar to begin!")
+elif not st.session_state.sheet_connected:
+    st.warning("⚠️ Click '🔗 Connect to Google Sheets' in the sidebar to sync labels!")
 else:
     col1, col2 = st.columns([1, 1])
 
@@ -113,11 +212,10 @@ else:
             st.session_state.current_message = None
             st.session_state.message_index = None
 
-    # display current message
+    # Display current message
     if st.session_state.current_message:
         st.divider()
 
-        # message display
         st.markdown("### 💬 Current Message")
         message_container = st.container(border=True)
         with message_container:
@@ -126,7 +224,6 @@ else:
 
         st.divider()
 
-        # labeling interface
         st.markdown("### 🏷️ Select Sentiment")
 
         col1, col2 = st.columns(2)
@@ -149,56 +246,43 @@ else:
 
         st.divider()
 
-        # submit button
         col1, col2, col3 = st.columns([1, 1, 1])
 
         with col2:
             if st.button("✅ Submit Label", use_container_width=True, type="primary"):
                 if sentiment != "Select..." and confidence != "Select...":
-                    # Extract confidence score (first character)
                     confidence_score = int(confidence[0])
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                    # prepare entry
-                    entry = pd.DataFrame({
-                        'message_id': [st.session_state.message_index],
-                        'message': [st.session_state.current_message],
-                        'sentiment': [sentiment],
-                        'confidence': [confidence_score],
-                        'labeled_by': [labeler_name],
-                        'timestamp': [datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
-                    })
+                    # Save to Google Sheet
+                    if save_label_to_sheet(
+                            st.session_state.sheet,
+                            st.session_state.message_index,
+                            st.session_state.current_message,
+                            sentiment,
+                            confidence_score,
+                            labeler_name,
+                            timestamp
+                    ):
+                        st.success(
+                            f"✅ Labeled as **{sentiment}** (Confidence: {confidence_score}/5) and saved to Google Sheets!")
+                        st.session_state.labeled_count += 1
+                        st.balloons()
 
-                    # save to csv
-                    csv_filename = 'twitch_labels.csv'
-                    try:
-                        df = pd.read_csv(csv_filename)
-                        df = pd.concat([df, entry], ignore_index=True)
-                    except FileNotFoundError:
-                        df = entry
-
-                    df.to_csv(csv_filename, index=False)
-
-                    # success message
-                    st.success(f"✅ Labeled as **{sentiment}** (Confidence: {confidence_score}/5)")
-                    st.session_state.labeled_count += 1
-                    st.balloons()
-
-                    # progress
-                    st.info(f"📊 You've labeled **{st.session_state.labeled_count} messages** so far!")
-
-                    # clear for next message
-                    st.session_state.current_message = None
-                    st.session_state.message_index = None
+                        st.session_state.current_message = None
+                        st.session_state.message_index = None
+                    else:
+                        st.error("❌ Failed to save to Google Sheets")
 
                 else:
                     st.error("⚠️ Please select both sentiment and confidence!")
     else:
-        if st.session_state.dataset_loaded:
-            st.info("Click 'Load Random Message' to start labeling!")
+        if st.session_state.dataset_loaded and st.session_state.sheet_connected:
+            st.info("👈 Click 'Load Random Message' to start labeling!")
 
-    # progress tracker
+    # Progress tracker
     st.divider()
-    st.markdown("### Labeling Progress")
+    st.markdown("### 📈 Labeling Progress (This Session)")
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -209,34 +293,51 @@ else:
         progress_pct = min((st.session_state.labeled_count / 500) * 100, 100)
         st.metric("Progress", f"{progress_pct:.1f}%")
 
-    # progress bar
     progress_bar = st.progress(min(st.session_state.labeled_count / 500, 1.0))
 
-    # labeled data
+    # Show all labeled data from sheet
     st.divider()
-    st.markdown("### 💾 Your Labeled Messages")
-    csv_filename = 'twitch_labels.csv'
-    if os.path.exists(csv_filename):
-        df_labeled = pd.read_csv(csv_filename)
-        df_labeled_user = df_labeled[df_labeled['labeled_by'] == labeler_name] if labeler_name else df_labeled
+    st.markdown("### 💾 All Labels (From Google Sheets)")
 
-        st.write(f"**Total labeled by {labeler_name if labeler_name else 'all'}:** {len(df_labeled_user)}")
+    if st.button("🔄 Refresh All Labels", use_container_width=True):
+        with st.spinner("Loading all labels from Google Sheets..."):
+            df_all = load_labels_from_sheet(st.session_state.sheet)
 
-        # sentiment distribution
-        if len(df_labeled_user) > 0:
-            sentiment_counts = df_labeled_user['sentiment'].value_counts()
-            st.bar_chart(sentiment_counts)
+            if not df_all.empty:
+                st.success(f"✅ Loaded {len(df_all)} total labels")
 
-            # show recent labels
-            st.subheader("Recent Labels")
-            st.dataframe(df_labeled_user.tail(10).iloc[::-1], use_container_width=True)
+                # Overall stats
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Labels", len(df_all))
+                with col2:
+                    if labeler_name:
+                        df_user = df_all[df_all['labeled_by'] == labeler_name]
+                        st.metric(f"Your Labels", len(df_user))
+                with col3:
+                    st.metric("Team Members", df_all['labeled_by'].nunique())
+
+                # Sentiment distribution
+                st.subheader("Sentiment Distribution (All)")
+                sentiment_counts = df_all['sentiment'].value_counts()
+                st.bar_chart(sentiment_counts)
+
+                # By labeler
+                st.subheader("Labels by Team Member")
+                labeler_counts = df_all['labeled_by'].value_counts()
+                st.bar_chart(labeler_counts)
+
+                # Recent labels
+                st.subheader("Recent Labels (Latest 15)")
+                st.dataframe(df_all.tail(15).iloc[::-1], use_container_width=True)
+            else:
+                st.info("No labels yet. Start labeling!")
 
 # Footer
 st.divider()
 st.markdown("""
 <div style='text-align: center; color: gray; font-size: 12px;'>
 Twitch Sentiment Labeling Tool | CS 175 Project<br>
-<br>
-Labels saved to: twitch_labels.csv
+Labels synced to Google Sheets
 </div>
 """, unsafe_allow_html=True)
