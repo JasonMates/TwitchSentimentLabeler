@@ -228,71 +228,60 @@ else:
             st.session_state.message_index = None
 
 
-    # load 7TV emotes from API
+    # load BTTV emotes from API
     @st.cache_resource
-    def load_7tv_emotes():
-        """Load 7TV emotes from the API"""
+    def load_bttv_emotes():
+        """Load BTTV emotes from the API"""
         import requests
 
         try:
-            # fetch global emote set
-            response = requests.get('https://api.7tv.app/v3/emote-sets/global', timeout=10)
+            # fetch global emotes
+            response = requests.get('https://api.betterttv.net/3/emotes/global', timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 emotes = {}
-                if 'emotes' in data:
-                    for emote in data['emotes']:
-                        emote_name = emote.get('name')
-                        emote_id = emote.get('id')
-                        # Store complete emote data for URL construction
-                        if emote_name and emote_id:
-                            emotes[emote_name] = {
-                                'id': emote_id,
-                                'data': emote
-                            }
+                for emote in data:
+                    emote_code = emote.get('code')
+                    emote_id = emote.get('id')
+                    image_type = emote.get('imageType', 'png')
+                    if emote_code and emote_id:
+                        emotes[emote_code] = {
+                            'id': emote_id,
+                            'type': image_type
+                        }
                 return emotes if emotes else {}
         except Exception as e:
-            st.warning(f"Could not load 7TV emotes: {e}")
+            st.warning(f"Could not load BTTV emotes: {e}")
 
         return {}
 
 
-    emote_map_7tv = load_7tv_emotes()
+    emote_map_bttv = load_bttv_emotes()
 
 
-    def get_7tv_emote_url(emote_data):
-        """Get 7TV emote image URL from emote data"""
+    def get_bttv_emote_url(emote_data):
+        """Get BTTV emote image URL"""
         try:
             emote_id = emote_data.get('id')
-            # Extract file info from the emote data
-            if 'data' in emote_data:
-                emote_obj = emote_data['data']
-                # 7TV stores files in 'files' array
-                if 'files' in emote_obj and len(emote_obj['files']) > 0:
-                    # Look for 4x quality file
-                    for file_info in emote_obj['files']:
-                        filename = file_info.get('name', '')
-                        if '4x' in filename:
-                            return f"https://cdn.7tv.app/emote/{emote_id}/{filename}"
-                    # Fallback to the last file (usually highest quality)
-                    return f"https://cdn.7tv.app/emote/{emote_id}/{emote_obj['files'][-1]['name']}"
-            # Fallback URL if data structure differs
-            return f"https://cdn.7tv.app/emote/{emote_id}/4x.webp"
+            image_type = emote_data.get('type', 'png')
+            if emote_id:
+                return f"https://cdn.betterttv.net/emote/{emote_id}/2x.{image_type}"
         except Exception as e:
             return None
+        return None
 
 
     def render_message_with_emotes(text):
-        """Render message with 7TV emote images"""
+        """Render message with BTTV emote images"""
         html = f'<div style="font-size: 18px; line-height: 1.8;">'
         words = text.split()
 
         for word in words:
-            if word in emote_map_7tv:
-                emote_data = emote_map_7tv[word]
-                emote_url = get_7tv_emote_url(emote_data)
+            if word in emote_map_bttv:
+                emote_data = emote_map_bttv[word]
+                emote_url = get_bttv_emote_url(emote_data)
                 if emote_url:
-                    html += f'<img src="{emote_url}" alt="{word}" style="height: 28px; margin: 0 2px; vertical-align: middle;">'
+                    html += f'<img src="{emote_url}" alt="{word}" style="height: 28px; margin: 0 2px; vertical-align: middle;" onerror="this.style.display=\'none\'">'
                 else:
                     html += f'<span style="margin-right: 4px;">{word}</span>'
             else:
