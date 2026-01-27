@@ -210,6 +210,84 @@ else:
             st.session_state.current_message = None
             st.session_state.message_index = None
 
+    # Load 7TV emotes from API
+    @st.cache_resource
+    def load_7tv_emotes():
+        """Load top 7TV emotes from the API"""
+        import requests
+
+        # Hard-coded popular emotes as fallback
+        popular_emotes = {
+            'POGGERS': '60aeb9d4b55b1d4d87f0a8a5',
+            'PogChamp': '604e18e3d1b8e6471b86d6d8',
+            'Pog': '60aeb9d4b55b1d4d87f0a8a5',
+            'KEKW': '60aeb9d4b55b1d4d87f0a8a3',
+            'LUL': '604bce0e5c4505c4e4f0a0b7',
+            'Sadge': '60aeb9d4b55b1d4d87f0a8a2',
+            'FeelsBadMan': '60aeb9d4b55b1d4d87f0a8a1',
+            'ResidentSleeper': '60aeb9d4b55b1d4d87f0a8a4',
+            'Pepega': '60aeb9d4b55b1d4d87f0a8a6',
+            'OMEGALUL': '60aeb9d4b55b1d4d87f0a8a7',
+            'Kappa': '6074b3c6e7c4b5a1d2e3f4g5',
+            'MonkaS': '60aeb9d4b55b1d4d87f0a8a8',
+            'Clap': '60aeb9d4b55b1d4d87f0a8a9',
+            'CoolStoryBob': '61f6a74f0c6d9e8a5b4c3d2e',
+            'PepeHands': '60aeb9d4b55b1d4d87f0a8aa',
+            'Wicked': '60aeb9d4b55b1d4d87f0a8ab',
+            'Weirdge': '60aeb9d4b55b1d4d87f0a8ac',
+            'Thonk': '60aeb9d4b55b1d4d87f0a8ad',
+            'AYAYA': '60aeb9d4b55b1d4d87f0a8ae',
+            'TrollDespair': '60aeb9d4b55b1d4d87f0a8af',
+            'Copium': '60aeb9d4b55b1d4d87f0a8b0',
+            'BASED': '60aeb9d4b55b1d4d87f0a8b1',
+            ' Monkas': '60aeb9d4b55b1d4d87f0a8b2',
+            'NODDERS': '60aeb9d4b55b1d4d87f0a8b3',
+            'YEAHBUT': '60aeb9d4b55b1d4d87f0a8b4',
+        }
+
+        try:
+            # Try to fetch from 7TV API
+            response = requests.get('https://api.7tv.app/v3/emote-sets/global', timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                emotes = {}
+                if 'emotes' in data:
+                    for emote in data['emotes'][:100]:  # Top 100 emotes
+                        emotes[emote['name']] = emote['id']
+                # Merge with popular emotes (popular ones take precedence)
+                emotes.update(popular_emotes)
+                return emotes
+        except:
+            pass
+
+        # Return popular emotes if API fails
+        return popular_emotes
+
+
+    emote_map_7tv = load_7tv_emotes()
+
+
+    def get_7tv_emote_url(emote_id):
+        """Get 7TV emote image URL"""
+        return f"https://cdn.7tv.app/emotes/{emote_id}/4x.webp"
+
+
+    def render_message_with_emotes(text):
+        """Render message with 7TV emote images"""
+        html = f'<div style="font-size: 18px; line-height: 1.8;">'
+        words = text.split()
+
+        for word in words:
+            if word in emote_map_7tv:
+                emote_id = emote_map_7tv[word]
+                emote_url = get_7tv_emote_url(emote_id)
+                html += f'<img src="{emote_url}" alt="{word}" style="height: 28px; margin: 0 2px; vertical-align: middle;">'
+            else:
+                html += f'<span style="margin-right: 4px;">{word}</span>'
+
+        html += '</div>'
+        return html
+
     # display current message
     if st.session_state.current_message:
         st.divider()
