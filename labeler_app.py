@@ -9,7 +9,7 @@ import json
 
 st.set_page_config(page_title="Twitch Sentiment Labeler", layout="centered")
 
-# init session state
+# initialize session
 if 'current_message' not in st.session_state:
     st.session_state.current_message = None
 if 'message_index' not in st.session_state:
@@ -26,7 +26,7 @@ if 'sheet' not in st.session_state:
     st.session_state.sheet = None
 
 
-# load dataset
+# load dataset once
 @st.cache_resource
 def load_twitch_data():
     """Load and cache the Twitch dataset from HuggingFace"""
@@ -39,12 +39,12 @@ def load_twitch_data():
         return []
 
 
-# google sheets
+# google Sheets functions
 @st.cache_resource
 def init_google_sheets():
     """Initialize Google Sheets connection"""
     try:
-        # get credentials
+        # get credentials from Streamlit secrets
         creds_dict = st.secrets["google_sheets"]
 
         scope = [
@@ -55,7 +55,7 @@ def init_google_sheets():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
 
-        # open spreadsheet
+        # open the spreadsheet
         spreadsheet = client.open('Twitch_Sentiment_Labels')
         sheet = spreadsheet.sheet1
 
@@ -66,7 +66,6 @@ def init_google_sheets():
 
 
 def load_labels_from_sheet(sheet):
-    """load labels from sheet"""
     try:
         records = sheet.get_all_records()
         if records:
@@ -78,7 +77,6 @@ def load_labels_from_sheet(sheet):
 
 
 def save_label_to_sheet(sheet, message_id, message, sentiment, confidence, labeler_name, timestamp):
-    """save a single label to sheet"""
     try:
         sheet.append_row([
             message_id,
@@ -94,9 +92,9 @@ def save_label_to_sheet(sheet, message_id, message, sentiment, confidence, label
         return False
 
 
-# title and description
-st.title("Twitch Chat Sentiment Labeler")
-st.markdown("Label Twitch chat messages by sentiment.")
+# Title and description
+st.title("🎮 Twitch Chat Sentiment Labeler")
+st.markdown("Label Twitch chat messages by sentiment. Help train our ML model!")
 
 # sidebar
 with st.sidebar:
@@ -105,7 +103,7 @@ with st.sidebar:
 
     st.divider()
 
-    # google sheets connection
+    # google Sheets Connection
     st.subheader("📊 Google Sheets Setup")
 
     if st.button("🔗 Connect to Google Sheets", use_container_width=True):
@@ -121,7 +119,7 @@ with st.sidebar:
     if st.session_state.sheet_connected:
         st.success("✅ Google Sheets connected")
 
-        # show current stats from sheet
+        # Show current stats from sheet
         if st.button("📂 Refresh Stats from Sheet", use_container_width=True):
             with st.spinner("Loading labels..."):
                 df = load_labels_from_sheet(st.session_state.sheet)
@@ -191,7 +189,7 @@ with st.sidebar:
         - Signs: Informational, greetings, generic
         """)
 
-# main content
+# main
 if not st.session_state.dataset_loaded:
     st.warning("⚠️ Click '📥 Load Twitch Dataset' in the sidebar to begin!")
 elif not st.session_state.sheet_connected:
@@ -210,13 +208,13 @@ else:
             st.session_state.current_message = None
             st.session_state.message_index = None
 
-    # Load 7TV emotes from API
+
+    # load 7TV emotes from API
     @st.cache_resource
     def load_7tv_emotes():
-        """Load top 7TV emotes from the API"""
         import requests
 
-        # Hard-coded popular emotes as fallback
+        # hard coded popular emotes as fallback
         popular_emotes = {
             'POGGERS': '60aeb9d4b55b1d4d87f0a8a5',
             'PogChamp': '604e18e3d1b8e6471b86d6d8',
@@ -246,21 +244,21 @@ else:
         }
 
         try:
-            # Try to fetch from 7TV API
+            # try to fetch from 7TV API
             response = requests.get('https://api.7tv.app/v3/emote-sets/global', timeout=5)
             if response.status_code == 200:
                 data = response.json()
                 emotes = {}
                 if 'emotes' in data:
-                    for emote in data['emotes'][:100]:  # Top 100 emotes
+                    for emote in data['emotes'][:100]:  # top 100 emotes
                         emotes[emote['name']] = emote['id']
-                # Merge with popular emotes (popular ones take precedence)
+                # merge with popular emotes
                 emotes.update(popular_emotes)
                 return emotes
         except:
             pass
 
-        # Return popular emotes if API fails
+        # return popular emotes if API fails
         return popular_emotes
 
 
@@ -288,6 +286,7 @@ else:
         html += '</div>'
         return html
 
+
     # display current message
     if st.session_state.current_message:
         st.divider()
@@ -296,7 +295,10 @@ else:
         message_container = st.container(border=True)
         with message_container:
             st.write(f"**ID:** {st.session_state.message_index}")
-            st.markdown(f'```\n{st.session_state.current_message}\n```')
+            # Display message with 7TV emotes
+            emote_html = render_message_with_emotes(st.session_state.current_message)
+            st.markdown(emote_html, unsafe_allow_html=True)
+            st.caption(f"Original text: {st.session_state.current_message}")
 
         st.divider()
 
@@ -354,7 +356,7 @@ else:
                     st.error("⚠️ Please select both sentiment and confidence!")
     else:
         if st.session_state.dataset_loaded and st.session_state.sheet_connected:
-            st.info("Click 'Load Random Message' to start labeling!")
+            st.info("👈 Click 'Load Random Message' to start labeling!")
 
     # progress tracker
     st.divider()
@@ -382,7 +384,7 @@ else:
             if not df_all.empty:
                 st.success(f"✅ Loaded {len(df_all)} total labels")
 
-                # overall stats
+                # Overall stats
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric("Total Labels", len(df_all))
@@ -398,7 +400,7 @@ else:
                 sentiment_counts = df_all['sentiment'].value_counts()
                 st.bar_chart(sentiment_counts)
 
-                # by labeler
+                # labeler
                 st.subheader("Labels by Team Member")
                 labeler_counts = df_all['labeled_by'].value_counts()
                 st.bar_chart(labeler_counts)
@@ -409,11 +411,11 @@ else:
             else:
                 st.info("No labels yet. Start labeling!")
 
-# footer
+# Footer
 st.divider()
 st.markdown("""
 <div style='text-align: center; color: gray; font-size: 12px;'>
-Twitch Sentiment Labeling Tool | CS 175 Project<br>
-Labels synced to Google Sheets
+Twitch Sentiment Labeling | CS 175 Project<br>
+Labels synced to Google Sheets.
 </div>
 """, unsafe_allow_html=True)
