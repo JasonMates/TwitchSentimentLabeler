@@ -95,7 +95,7 @@ def save_label_to_sheet(sheet, message_id, message, sentiment, confidence, label
 
 
 # title and description
-st.title("🎮 Twitch Chat Sentiment Labeler")
+st.title("Twitch Chat Sentiment Labeler")
 st.markdown("Label Twitch chat messages by sentiment. Help train our ML model!")
 
 # sidebar
@@ -149,42 +149,42 @@ with st.sidebar:
     st.divider()
     st.subheader("📖 Sentiment Guide")
 
-    with st.expander("😄 Excitement"):
+    with st.expander("Excitement"):
         st.write("""
         **Positive emotion about gameplay**
         - Examples: POGGERS, LETS GO, CLUTCH, HOLY
         - Signs: Caps lock, !, positive gaming emotes
         """)
 
-    with st.expander("😠 Frustration"):
+    with st.expander("Frustration"):
         st.write("""
         **Negative emotion, disappointment**
         - Examples: wtf, trash, ff15, throw
         - Signs: Curse words, negative words, ?
         """)
 
-    with st.expander("😂 Humor"):
+    with st.expander("Humor"):
         st.write("""
         **Jokes, memes, sarcasm, playfulness**
         - Examples: KEKW, copypasta, laugh emotes
         - Signs: Laugh emotes, joke structure, sarcasm
         """)
 
-    with st.expander("❓ Confusion"):
+    with st.expander("Confusion"):
         st.write("""
         **Questions, not understanding**
         - Examples: what happened?, ???, how?
         - Signs: Question marks, confusion emotes
         """)
 
-    with st.expander("😴 Boredom"):
+    with st.expander("Boredom"):
         st.write("""
         **Lack of interest, slow pace**
         - Examples: ResidentSleeper, zzzz, boring
         - Signs: Sleep emotes, pace complaints
         """)
 
-    with st.expander("😐 Neutral"):
+    with st.expander("Neutral"):
         st.write("""
         **Everything else**
         - Examples: hi, gg, nice, general chat
@@ -276,7 +276,7 @@ else:
                     st.error("⚠️ Please select both sentiment and confidence!")
     else:
         if st.session_state.dataset_loaded and st.session_state.sheet_connected:
-            st.info("👈 Click 'Load Random Message' to start labeling!")
+            st.info("Click 'Load Random Message' to start labeling!")
 
     # progress tracker
     st.divider()
