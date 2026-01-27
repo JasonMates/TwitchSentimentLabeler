@@ -7,9 +7,10 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 
+# page config
 st.set_page_config(page_title="Twitch Sentiment Labeler", layout="centered")
 
-# initialize session
+# initialize session state
 if 'current_message' not in st.session_state:
     st.session_state.current_message = None
 if 'message_index' not in st.session_state:
@@ -26,7 +27,7 @@ if 'sheet' not in st.session_state:
     st.session_state.sheet = None
 
 
-# load dataset once
+# load dataset
 @st.cache_resource
 def load_twitch_data():
     """Load and cache the Twitch dataset from HuggingFace"""
@@ -44,7 +45,7 @@ def load_twitch_data():
 def init_google_sheets():
     """Initialize Google Sheets connection"""
     try:
-        # get credentials from Streamlit secrets
+        # Get credentials from Streamlit secrets
         creds_dict = st.secrets["google_sheets"]
 
         scope = [
@@ -66,6 +67,7 @@ def init_google_sheets():
 
 
 def load_labels_from_sheet(sheet):
+    """Load all labels from Google Sheet"""
     try:
         records = sheet.get_all_records()
         if records:
@@ -77,6 +79,7 @@ def load_labels_from_sheet(sheet):
 
 
 def save_label_to_sheet(sheet, message_id, message, sentiment, confidence, labeler_name, timestamp):
+    """Save a single label to Google Sheet"""
     try:
         sheet.append_row([
             message_id,
@@ -92,8 +95,8 @@ def save_label_to_sheet(sheet, message_id, message, sentiment, confidence, label
         return False
 
 
-# Title and description
-st.title("🎮 Twitch Chat Sentiment Labeler")
+# title and description
+st.title("Twitch Chat Sentiment Labeler")
 st.markdown("Label Twitch chat messages by sentiment.")
 
 # sidebar
@@ -119,7 +122,7 @@ with st.sidebar:
     if st.session_state.sheet_connected:
         st.success("✅ Google Sheets connected")
 
-        # Show current stats from sheet
+        # show current stats from sheet
         if st.button("📂 Refresh Stats from Sheet", use_container_width=True):
             with st.spinner("Loading labels..."):
                 df = load_labels_from_sheet(st.session_state.sheet)
@@ -189,7 +192,7 @@ with st.sidebar:
         - Signs: Informational, greetings, generic
         """)
 
-# main
+# main content
 if not st.session_state.dataset_loaded:
     st.warning("⚠️ Click '📥 Load Twitch Dataset' in the sidebar to begin!")
 elif not st.session_state.sheet_connected:
@@ -212,54 +215,23 @@ else:
     # load 7TV emotes from API
     @st.cache_resource
     def load_7tv_emotes():
+        """Load 7TV emotes from the API"""
         import requests
 
-        # hard coded popular emotes as fallback
-        popular_emotes = {
-            'POGGERS': '60aeb9d4b55b1d4d87f0a8a5',
-            'PogChamp': '604e18e3d1b8e6471b86d6d8',
-            'Pog': '60aeb9d4b55b1d4d87f0a8a5',
-            'KEKW': '60aeb9d4b55b1d4d87f0a8a3',
-            'LUL': '604bce0e5c4505c4e4f0a0b7',
-            'Sadge': '60aeb9d4b55b1d4d87f0a8a2',
-            'FeelsBadMan': '60aeb9d4b55b1d4d87f0a8a1',
-            'ResidentSleeper': '60aeb9d4b55b1d4d87f0a8a4',
-            'Pepega': '60aeb9d4b55b1d4d87f0a8a6',
-            'OMEGALUL': '60aeb9d4b55b1d4d87f0a8a7',
-            'Kappa': '6074b3c6e7c4b5a1d2e3f4g5',
-            'MonkaS': '60aeb9d4b55b1d4d87f0a8a8',
-            'Clap': '60aeb9d4b55b1d4d87f0a8a9',
-            'CoolStoryBob': '61f6a74f0c6d9e8a5b4c3d2e',
-            'PepeHands': '60aeb9d4b55b1d4d87f0a8aa',
-            'Wicked': '60aeb9d4b55b1d4d87f0a8ab',
-            'Weirdge': '60aeb9d4b55b1d4d87f0a8ac',
-            'Thonk': '60aeb9d4b55b1d4d87f0a8ad',
-            'AYAYA': '60aeb9d4b55b1d4d87f0a8ae',
-            'TrollDespair': '60aeb9d4b55b1d4d87f0a8af',
-            'Copium': '60aeb9d4b55b1d4d87f0a8b0',
-            'BASED': '60aeb9d4b55b1d4d87f0a8b1',
-            ' Monkas': '60aeb9d4b55b1d4d87f0a8b2',
-            'NODDERS': '60aeb9d4b55b1d4d87f0a8b3',
-            'YEAHBUT': '60aeb9d4b55b1d4d87f0a8b4',
-        }
-
         try:
-            # try to fetch from 7TV API
-            response = requests.get('https://api.7tv.app/v3/emote-sets/global', timeout=5)
+            # fetch global emote set
+            response = requests.get('https://api.7tv.app/v3/emote-sets/global', timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 emotes = {}
                 if 'emotes' in data:
-                    for emote in data['emotes'][:100]:  # top 100 emotes
+                    for emote in data['emotes']:
                         emotes[emote['name']] = emote['id']
-                # merge with popular emotes
-                emotes.update(popular_emotes)
-                return emotes
-        except:
-            pass
+                return emotes if emotes else {}
+        except Exception as e:
+            st.warning(f"Could not load 7TV emotes: {e}")
 
-        # return popular emotes if API fails
-        return popular_emotes
+        return {}
 
 
     emote_map_7tv = load_7tv_emotes()
@@ -291,18 +263,18 @@ else:
     if st.session_state.current_message:
         st.divider()
 
-        st.markdown("### 💬 Current Message")
+        st.markdown("### Current Message")
         message_container = st.container(border=True)
         with message_container:
             st.write(f"**ID:** {st.session_state.message_index}")
-            # Display message with 7TV emotes
+            # display message with emotes
             emote_html = render_message_with_emotes(st.session_state.current_message)
             st.markdown(emote_html, unsafe_allow_html=True)
             st.caption(f"Original text: {st.session_state.current_message}")
 
         st.divider()
 
-        st.markdown("### 🏷️ Select Sentiment")
+        st.markdown("### Select Sentiment")
 
         col1, col2 = st.columns(2)
 
@@ -356,7 +328,7 @@ else:
                     st.error("⚠️ Please select both sentiment and confidence!")
     else:
         if st.session_state.dataset_loaded and st.session_state.sheet_connected:
-            st.info("👈 Click 'Load Random Message' to start labeling!")
+            st.info("Click 'Load Random Message' to start labeling!")
 
     # progress tracker
     st.divider()
@@ -373,7 +345,7 @@ else:
 
     progress_bar = st.progress(min(st.session_state.labeled_count / 500, 1.0))
 
-    # show all labeled data from sheet
+    # show all data from sheet
     st.divider()
     st.markdown("### 💾 All Labels (From Google Sheets)")
 
@@ -384,7 +356,7 @@ else:
             if not df_all.empty:
                 st.success(f"✅ Loaded {len(df_all)} total labels")
 
-                # Overall stats
+                # stats
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric("Total Labels", len(df_all))
@@ -395,19 +367,16 @@ else:
                 with col3:
                     st.metric("Team Members", df_all['labeled_by'].nunique())
 
-                # sentiment distribution
                 st.subheader("Sentiment Distribution (All)")
                 sentiment_counts = df_all['sentiment'].value_counts()
                 st.bar_chart(sentiment_counts)
 
-                # labeler
                 st.subheader("Labels by Team Member")
                 labeler_counts = df_all['labeled_by'].value_counts()
                 st.bar_chart(labeler_counts)
 
-                # recent labels
                 st.subheader("Recent Labels (Latest 15)")
-                st.dataframe(df_all.tail(15).iloc[::-1], use_container_width=True)
+                st.dataframe(df_all.tail(50).iloc[::-1], use_container_width=True)
             else:
                 st.info("No labels yet. Start labeling!")
 
@@ -416,6 +385,6 @@ st.divider()
 st.markdown("""
 <div style='text-align: center; color: gray; font-size: 12px;'>
 Twitch Sentiment Labeling | CS 175 Project<br>
-Labels synced to Google Sheets.
+Labels synced to Google Sheets
 </div>
 """, unsafe_allow_html=True)
