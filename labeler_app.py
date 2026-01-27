@@ -242,7 +242,14 @@ else:
                 emotes = {}
                 if 'emotes' in data:
                     for emote in data['emotes']:
-                        emotes[emote['name']] = emote['id']
+                        emote_name = emote.get('name')
+                        emote_id = emote.get('id')
+                        # Store complete emote data for URL construction
+                        if emote_name and emote_id:
+                            emotes[emote_name] = {
+                                'id': emote_id,
+                                'data': emote
+                            }
                 return emotes if emotes else {}
         except Exception as e:
             st.warning(f"Could not load 7TV emotes: {e}")
@@ -253,9 +260,26 @@ else:
     emote_map_7tv = load_7tv_emotes()
 
 
-    def get_7tv_emote_url(emote_id):
-        """Get 7TV emote image URL"""
-        return f"https://cdn.7tv.app/emotes/{emote_id}/4x.webp"
+    def get_7tv_emote_url(emote_data):
+        """Get 7TV emote image URL from emote data"""
+        try:
+            emote_id = emote_data.get('id')
+            # Extract file info from the emote data
+            if 'data' in emote_data:
+                emote_obj = emote_data['data']
+                # 7TV stores files in 'files' array
+                if 'files' in emote_obj and len(emote_obj['files']) > 0:
+                    # Look for 4x quality file
+                    for file_info in emote_obj['files']:
+                        filename = file_info.get('name', '')
+                        if '4x' in filename:
+                            return f"https://cdn.7tv.app/emote/{emote_id}/{filename}"
+                    # Fallback to the last file (usually highest quality)
+                    return f"https://cdn.7tv.app/emote/{emote_id}/{emote_obj['files'][-1]['name']}"
+            # Fallback URL if data structure differs
+            return f"https://cdn.7tv.app/emote/{emote_id}/4x.webp"
+        except Exception as e:
+            return None
 
 
     def render_message_with_emotes(text):
@@ -265,9 +289,12 @@ else:
 
         for word in words:
             if word in emote_map_7tv:
-                emote_id = emote_map_7tv[word]
-                emote_url = get_7tv_emote_url(emote_id)
-                html += f'<img src="{emote_url}" alt="{word}" style="height: 28px; margin: 0 2px; vertical-align: middle;">'
+                emote_data = emote_map_7tv[word]
+                emote_url = get_7tv_emote_url(emote_data)
+                if emote_url:
+                    html += f'<img src="{emote_url}" alt="{word}" style="height: 28px; margin: 0 2px; vertical-align: middle;">'
+                else:
+                    html += f'<span style="margin-right: 4px;">{word}</span>'
             else:
                 html += f'<span style="margin-right: 4px;">{word}</span>'
 
