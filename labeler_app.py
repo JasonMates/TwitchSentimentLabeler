@@ -227,6 +227,11 @@ else:
             st.session_state.current_message = None
             st.session_state.message_index = None
 
+    # Load Twitch API credentials from secrets
+    twitch_client_id = st.secrets.get("twitch", {}).get("client_id")
+    twitch_token = st.secrets.get("twitch", {}).get("access_token")
+    twitch_creator_id = st.secrets.get("twitch", {}).get("twitch_creator_id", "121059319")
+
 
     # load BTTV emotes from API
     @st.cache_resource
@@ -256,14 +261,119 @@ else:
         return {}
 
 
-    emote_map_bttv = load_bttv_emotes()
+    @st.cache_resource
+    def load_bttv_channel_emotes():
+        """Load BTTV emotes for the specified creator channel"""
+        import requests
 
-
-    def get_bttv_emote_url(emote_data):
-        """Get BTTV emote image URL"""
         try:
+            response = requests.get(
+                f'https://api.betterttv.net/3/cached/users/twitch/{twitch_creator_id}',
+                timeout=10
+            )
+            if response.status_code == 200:
+                data = response.json()
+                emotes = {}
+
+                # Load channel emotes
+                for emote in data.get('channelEmotes', []):
+                    emote_code = emote.get('code')
+                    emote_id = emote.get('id')
+                    if emote_code and emote_id:
+                        emotes[emote_code] = {
+                            'id': emote_id,
+                            'type': 'gif' if emote.get('animated') else 'png',
+                            'source': 'bttv_channel'
+                        }
+
+                # Load shared emotes
+                for emote in data.get('sharedEmotes', []):
+                    emote_code = emote.get('code')
+                    emote_id = emote.get('id')
+                    if emote_code and emote_id:
+                        emotes[emote_code] = {
+                            'id': emote_id,
+                            'type': 'gif' if emote.get('animated') else 'png',
+                            'source': 'bttv_shared'
+                        }
+
+                return emotes if emotes else {}
+        except Exception as e:
+            st.warning(f"Could not load BTTV channel emotes for {twitch_creator_id}: {e}")
+
+        return {}
+
+
+    @st.cache_resource
+    def load_twitch_global_emotes():
+        """Load Twitch native global emotes"""
+        import requests
+
+        if not twitch_client_id or not twitch_token:
+            st.warning("Twitch API credentials not configured in secrets.toml")
+            return {}
+
+        try:
+            headers = {
+                'Authorization': f'Bearer {twitch_token}',
+                'Client-ID': twitch_client_id
+            }
+            response = requests.get(
+                'https://api.twitch.tv/helix/chat/emotes/global',
+                headers=headers,
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                emotes = {}
+
+                for emote in data.get('data', []):
+                    emote_name = emote.get('name')
+                    emote_id = emote.get('id')
+                    images = emote.get('images', {})
+
+                    if emote_name and emote_id:
+                        # Use 2x image URL from Twitch
+                        image_url = images.get('url_2x', '')
+                        emotes[emote_name] = {
+                            'id': emote_id,
+                            'url': image_url,
+                            'source': 'twitch_native'
+                        }
+
+                return emotes if emotes else {}
+        except Exception as e:
+            st.warning(f"Could not load Twitch global emotes: {e}")
+
+        return {}
+
+
+    # Load emotes from all sources
+    emote_map_twitch = load_twitch_global_emotes()
+    emote_map_bttv_global = load_bttv_emotes()
+    emote_map_bttv_channel = load_bttv_channel_emotes()
+
+    # Combine all emotes (Twitch takes priority, then BTTV channel, then BTTV global)
+    emote_map_combined = {}
+    emote_map_combined.update(emote_map_bttv_global)  # Start with global BTTV
+    emote_map_combined.update(emote_map_bttv_channel)  # Override with channel BTTV
+    emote_map_combined.update(emote_map_twitch)  # Override with Twitch (highest priority)
+
+
+    def get_emote_url(emote_data):
+        """Get emote image URL from any source (Twitch, BTTV global, or BTTV channel)"""
+        try:
+            source = emote_data.get('source', 'bttv')
+
+            # Twitch native emotes have direct URLs
+            if source == 'twitch_native':
+                return emote_data.get('url')
+
+            # BTTV emotes need CDN construction
             emote_id = emote_data.get('id')
             image_type = emote_data.get('type', 'png')
+
             if emote_id:
                 return f"https://cdn.betterttv.net/emote/{emote_id}/2x.{image_type}"
         except Exception as e:
@@ -272,14 +382,14 @@ else:
 
 
     def render_message_with_emotes(text):
-        """Render message with BTTV emote images"""
+        """Render message with emotes from Twitch and BTTV"""
         html = f'<div style="font-size: 18px; line-height: 1.8;">'
         words = text.split()
 
         for word in words:
-            if word in emote_map_bttv:
-                emote_data = emote_map_bttv[word]
-                emote_url = get_bttv_emote_url(emote_data)
+            if word in emote_map_combined:
+                emote_data = emote_map_combined[word]
+                emote_url = get_emote_url(emote_data)
                 if emote_url:
                     html += f'<img src="{emote_url}" alt="{word}" style="height: 28px; margin: 0 2px; vertical-align: middle;" onerror="this.style.display=\'none\'">'
                 else:
