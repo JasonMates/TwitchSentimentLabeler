@@ -424,7 +424,7 @@ else:
         with col1:
             sentiment = st.selectbox(
                 "Sentiment:",
-                ["Select...", "Enthusiastic", "Noise", "Positive", "Negative", "Anxious", "Neutral"],
+                ["Select...", "Enthusiastic", "Noise", "Positive", "Negative", "Neutral", "Anxious"],
                 index=0,
                 key="sentiment_select"
             )
