@@ -166,46 +166,47 @@ with st.sidebar:
     st.divider()
     st.subheader("📖 Sentiment Guide")
 
-    with st.expander("Excitement"):
+    with st.expander("Enthusiastic"):
         st.write("""
-        **Positive emotion about gameplay**
-        - Examples: POGGERS, LETS GO, CLUTCH, HOLY
-        - Signs: Caps lock, !, positive gaming emotes
+        **High-energy hype / excitement (usually positive)**
+        - Examples (from this dataset): Pog, POGGERS, LETS GO, LETS GOOO, HOLY, HOLY MOLY, EZ, WOOO, SHEEESH, YOOOOOOOO
+        - Signs: ALL CAPS, elongated letters (GOOOO / YOOOOO), lots of !!!, short “hype burst” messages, hype keywords/emotes
         """)
 
-    with st.expander("Frustration"):
+    with st.expander("Positive"):
         st.write("""
-        **Negative emotion, disappointment**
-        - Examples: wtf, trash, ff15, throw
-        - Signs: Curse words, negative words, ?
+        **Positive but calmer approval / friendliness**
+        - Examples (from this dataset): gg, ggs, nice, ty, thanks, thank you, based, wp, awesome, amazing, LOVE YOU
+        - Signs: compliments, gratitude, “good/nice” language; less screaming punctuation than Enthusiastic
         """)
 
-    with st.expander("Humor"):
+    with st.expander("Negative"):
         st.write("""
-        **Jokes, memes, sarcasm, playfulness**
-        - Examples: KEKW, copypasta, laugh emotes
-        - Signs: Laugh emotes, joke structure, sarcasm
+        **Negative sentiment (anger, insults, disappointment, complaints)**
+        - Examples (from this dataset): wtf, trash, cringe, sucks, hate, moron, fuck, shit, bitch
+        - Signs: insults/blame, aggressive profanity, “this sucks” style complaints, accusatory tone, hostile wording
         """)
 
-    with st.expander("Confusion"):
+    with st.expander("Anxious"):
         st.write("""
-        **Questions, not understanding**
-        - Examples: what happened?, ???, how?
-        - Signs: Question marks, confusion emotes
-        """)
-
-    with st.expander("Boredom"):
-        st.write("""
-        **Lack of interest, slow pace**
-        - Examples: ResidentSleeper, zzzz, boring
-        - Signs: Sleep emotes, pace complaints
+        **Worry / panic / stress (nervous anticipation rather than pure anger)**
+        - Examples (from this dataset): MONKA, monkaS, monkaW, PLEASE, not like this, scared
+        - Signs: panic emotes/keywords, pleading (“PLEASE”), doom-y or fearful wording, tense punctuation (?!?!)
         """)
 
     with st.expander("Neutral"):
         st.write("""
-        **Everything else**
-        - Examples: hi, gg, nice, general chat
-        - Signs: Informational, greetings, generic
+        **Low-emotion / informational / general chat**
+        - Examples (from this dataset): hi, hello, LIVE, uptime, map, tomorrow
+        - Signs: greetings, basic questions, observations without strong opinion markers, minimal emotive punctuation
+        """)
+
+    with st.expander("Noise"):
+        st.write("""
+        **Low-signal spam / repetition / hard-to-interpret fragments**
+        - Examples (from this dataset): OMEGALUL, KEKW, WAITWAITWAIT WAITWAITWAIT WAITWAITWAIT, OOOOO OOOOO OOOOO,
+          HEAT HEAT HEAT HEAT HEAT, HHHHHHHHHHHH
+        - Signs: repeated tokens, repeated characters, emote-only strings, chant/spam patterns with unclear sentiment
         """)
 
 # main content
@@ -423,7 +424,7 @@ else:
         with col1:
             sentiment = st.selectbox(
                 "Sentiment:",
-                ["Select...", "Excitement", "Frustration", "Humor", "Confusion", "Boredom", "Neutral"],
+                ["Select...", "Enthusiastic", "Noise", "Positive", "Negative", "Anxious", "Neutral"],
                 index=0,
                 key="sentiment_select"
             )
