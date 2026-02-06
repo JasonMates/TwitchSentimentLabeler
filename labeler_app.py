@@ -1,59 +1,183 @@
 import streamlit as st
 import pandas as pd
-import random
 from datetime import datetime
-from datasets import load_dataset
+from pathlib import Path
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
 
 # page config
 st.set_page_config(page_title="Twitch Sentiment Labeler", layout="centered")
+
+# assignment config
+TEAM_MEMBERS = ["Bill", "Jason", "julian"]
+TARGET_PER_USER = 200
+SOURCE_ID_PREFIX = "SRC-"
+SOURCE_CSV_FILENAME = "Twitch_Sentiment_Labels - Sheet1 (5).csv"
+VALID_SENTIMENTS = ["Positive", "Negative", "Neutral"]
+SENTIMENT_TARGETS = {"Negative": 80, "Neutral": 80, "Positive": 40}
+
 
 # initialize session state
 if 'current_message' not in st.session_state:
     st.session_state.current_message = None
 if 'message_index' not in st.session_state:
     st.session_state.message_index = None
-if 'labeled_count' not in st.session_state:
-    st.session_state.labeled_count = 0
 if 'dataset_loaded' not in st.session_state:
     st.session_state.dataset_loaded = False
-if 'messages' not in st.session_state:
-    st.session_state.messages = []
+if 'source_df' not in st.session_state:
+    st.session_state.source_df = pd.DataFrame()
+if 'source_csv_path' not in st.session_state:
+    st.session_state.source_csv_path = ""
 if 'sheet_connected' not in st.session_state:
     st.session_state.sheet_connected = False
 if 'sheet' not in st.session_state:
     st.session_state.sheet = None
+if 'active_labeler' not in st.session_state:
+    st.session_state.active_labeler = None
+if 'session_labeled_ids' not in st.session_state:
+    st.session_state.session_labeled_ids = set()
 
 
-# load dataset
-@st.cache_resource
-def load_twitch_data():
-    """Load and cache the Twitch dataset from HuggingFace"""
-    try:
-        dataset = load_dataset("lparkourer10/twitch_chat")
-        messages = []
-        for msg in dataset['train']:
-            # Handle different message formats
-            if isinstance(msg, dict):
-                # Try different keys
-                message_text = msg.get('message') or msg.get('Message') or msg.get('text') or msg.get('Text') or str(
-                    msg)
-            else:
-                message_text = str(msg)
+def normalize_text(value):
+    """Normalize message text for duplicate checks."""
+    if pd.isna(value):
+        return ""
+    return " ".join(str(value).strip().split()).lower()
 
-            # Clean up if it's still a dict representation
-            if isinstance(message_text, dict):
-                message_text = message_text.get('message') or message_text.get('Message') or str(message_text)
 
-            if message_text:
-                messages.append(message_text)
+@st.cache_data
+def load_local_csv_messages():
+    """Load source messages from a local CSV in the project root."""
+    required_columns = {"message_id", "message", "sentiment", "labeled_by"}
 
-        return messages
-    except Exception as e:
-        st.error(f"Error loading dataset: {e}")
-        return []
+    preferred_path = Path(SOURCE_CSV_FILENAME)
+    csv_candidates = []
+    if preferred_path.exists():
+        csv_candidates.append(preferred_path)
+    csv_candidates.extend([path for path in sorted(Path(".").glob("*.csv")) if path != preferred_path])
+
+    for csv_path in csv_candidates:
+        try:
+            raw_df = pd.read_csv(csv_path)
+        except Exception:
+            continue
+
+        column_map = {col.strip().lower(): col for col in raw_df.columns}
+        if not required_columns.issubset(set(column_map.keys())):
+            continue
+
+        source_df = pd.DataFrame({
+            "source_message_id": raw_df[column_map["message_id"]].fillna("").astype(str).str.strip(),
+            "message": raw_df[column_map["message"]].fillna("").astype(str).str.strip(),
+            "source_sentiment": raw_df[column_map["sentiment"]].fillna("").astype(str).str.strip().str.title(),
+            "source_labeler": raw_df[column_map["labeled_by"]].fillna("").astype(str).str.strip(),
+        })
+
+        source_df = source_df[source_df["message"] != ""]
+        source_df = source_df[source_df["source_sentiment"].isin(VALID_SENTIMENTS)]
+        source_df = source_df.reset_index(drop=True)
+        source_df["source_row"] = source_df.index + 1
+        source_df["source_id"] = SOURCE_ID_PREFIX + source_df["source_row"].astype(str)
+
+        return source_df, str(csv_path), None
+
+    return pd.DataFrame(), "", "No local CSV found with columns: message_id, message, sentiment, labeled_by."
+
+
+def get_user_sheet_state(labels_df, labeler_name):
+    """Build per-user label history and overlap progress from Google Sheets."""
+    empty_counts = {sentiment: 0 for sentiment in VALID_SENTIMENTS}
+
+    if labels_df.empty or not labeler_name or "labeled_by" not in labels_df.columns:
+        return set(), set(), empty_counts, 0
+
+    user_df = labels_df[
+        labels_df["labeled_by"].fillna("").astype(str).str.strip().str.lower() == labeler_name.lower()
+    ].copy()
+
+    if user_df.empty:
+        return set(), set(), empty_counts, 0
+
+    source_ids = set()
+    if "message_id" in user_df.columns:
+        for raw_id in user_df["message_id"].fillna("").astype(str):
+            current_id = raw_id.strip()
+            if current_id.startswith(SOURCE_ID_PREFIX):
+                source_ids.add(current_id)
+
+    labeled_messages = set()
+    if "message" in user_df.columns:
+        labeled_messages = {normalize_text(msg) for msg in user_df["message"].fillna("").astype(str)}
+
+    overlap_counts = empty_counts.copy()
+    completed_overlap = 0
+    if "message_id" in user_df.columns and "sentiment" in user_df.columns:
+        overlap_df = user_df[user_df["message_id"].fillna("").astype(str).str.startswith(SOURCE_ID_PREFIX)]
+        if not overlap_df.empty:
+            sentiment_counts = overlap_df["sentiment"].fillna("").astype(str).str.strip().str.title().value_counts()
+            for sentiment in VALID_SENTIMENTS:
+                overlap_counts[sentiment] = int(sentiment_counts.get(sentiment, 0))
+            completed_overlap = int(sum(overlap_counts.values()))
+
+    return source_ids, labeled_messages, overlap_counts, completed_overlap
+
+
+def select_next_message(source_df, labels_df, labeler_name, session_labeled_ids):
+    """Deterministically select the next eligible message for a user."""
+    if source_df.empty:
+        return None, "No source messages are loaded."
+
+    source_ids, labeled_messages, overlap_counts, _ = get_user_sheet_state(labels_df, labeler_name)
+    session_id_set = set(session_labeled_ids)
+    already_labeled_ids = source_ids.union(session_id_set)
+
+    effective_completed = len(already_labeled_ids)
+    if effective_completed >= TARGET_PER_USER:
+        return None, f"Target reached ({TARGET_PER_USER} labels)."
+
+    # Include unsynced current-session labels when enforcing sentiment quotas.
+    unsynced_ids = session_id_set.difference(source_ids)
+    if unsynced_ids:
+        unsynced_rows = source_df[source_df["source_id"].isin(unsynced_ids)]
+        if not unsynced_rows.empty:
+            unsynced_counts = unsynced_rows["source_sentiment"].value_counts()
+            for sentiment in VALID_SENTIMENTS:
+                overlap_counts[sentiment] = overlap_counts.get(sentiment, 0) + int(unsynced_counts.get(sentiment, 0))
+
+    eligible_df = source_df[
+        source_df["source_labeler"].fillna("").astype(str).str.lower() != labeler_name.lower()
+    ].copy()
+    eligible_df = eligible_df[~eligible_df["source_id"].isin(already_labeled_ids)]
+    eligible_df = eligible_df[~eligible_df["message"].map(normalize_text).isin(labeled_messages)]
+    eligible_df = eligible_df.sort_values("source_row")
+
+    if eligible_df.empty:
+        return None, "No remaining eligible messages for this user."
+
+    remaining_targets = {
+        sentiment: max(SENTIMENT_TARGETS[sentiment] - overlap_counts.get(sentiment, 0), 0)
+        for sentiment in VALID_SENTIMENTS
+    }
+    sentiment_priority = ["Negative", "Neutral", "Positive"]
+    ordered_sentiments = sorted(
+        sentiment_priority,
+        key=lambda sentiment: (-remaining_targets[sentiment], sentiment_priority.index(sentiment))
+    )
+
+    for sentiment in ordered_sentiments:
+        if remaining_targets[sentiment] <= 0:
+            continue
+        bucket_df = eligible_df[eligible_df["source_sentiment"] == sentiment]
+        if not bucket_df.empty:
+            return bucket_df.iloc[0].to_dict(), None
+
+    # fallback if a target bucket is exhausted but other eligible messages remain
+    for sentiment in sentiment_priority:
+        bucket_df = eligible_df[eligible_df["source_sentiment"] == sentiment]
+        if not bucket_df.empty:
+            return bucket_df.iloc[0].to_dict(), None
+
+    return None, "No remaining eligible messages for this user."
 
 
 # google Sheets functions
@@ -118,7 +242,14 @@ st.markdown("Label Twitch chat messages by sentiment.")
 # sidebar
 with st.sidebar:
     st.header("⚙️ Settings")
-    labeler_name = st.text_input("Your Name:", placeholder="e.g., Student 1")
+    selected_labeler = st.selectbox("Labeler:", ["Select user..."] + TEAM_MEMBERS, index=0)
+    labeler_name = None if selected_labeler == "Select user..." else selected_labeler
+
+    if st.session_state.active_labeler != labeler_name:
+        st.session_state.active_labeler = labeler_name
+        st.session_state.current_message = None
+        st.session_state.message_index = None
+        st.session_state.session_labeled_ids = set()
 
     st.divider()
 
@@ -143,41 +274,39 @@ with st.sidebar:
             with st.spinner("Loading labels..."):
                 df = load_labels_from_sheet(st.session_state.sheet)
                 if not df.empty:
-                    df_user = df[df['labeled_by'] == labeler_name] if labeler_name else df
-                    st.metric("Your Labels", len(df_user))
+                    if labeler_name:
+                        df_user = df[
+                            df["labeled_by"].fillna("").astype(str).str.strip().str.lower() == labeler_name.lower()
+                        ]
+                        st.metric("Your Labels", len(df_user))
                     st.metric("Total Labels", len(df))
     else:
         st.warning("⚠️ Not connected to Google Sheets yet")
 
     st.divider()
 
-    # load dataset
-    if st.button("📥 Load Twitch Dataset", use_container_width=True):
-        with st.spinner("Loading Twitch dataset..."):
-            messages = load_twitch_data()
-            if messages:
-                st.session_state.messages = messages
-                st.session_state.dataset_loaded = True
-                st.success(f"✅ Loaded {len(messages)} messages!")
-
-    if st.session_state.dataset_loaded:
-        st.info(f"📊 Dataset ready: {len(st.session_state.messages)} messages available")
+    # load local CSV source
+    source_df, source_csv_path, source_error = load_local_csv_messages()
+    if source_error:
+        st.session_state.dataset_loaded = False
+        st.session_state.source_df = pd.DataFrame()
+        st.session_state.source_csv_path = ""
+        st.error(source_error)
+    else:
+        st.session_state.dataset_loaded = True
+        st.session_state.source_df = source_df
+        st.session_state.source_csv_path = source_csv_path
+        st.info(f"📄 Source CSV: {Path(source_csv_path).name} ({len(source_df)} messages)")
 
     st.divider()
     st.subheader("📖 Sentiment Guide")
 
-    with st.expander("Enthusiastic"):
-        st.write("""
-        **High-energy hype / excitement (usually positive)**
-        - Examples (from this dataset): Pog, POGGERS, LETS GO, LETS GOOO, HOLY, HOLY MOLY, EZ, WOOO, SHEEESH, YOOOOOOOO
-        - Signs: ALL CAPS, elongated letters (GOOOO / YOOOOO), lots of !!!, short “hype burst” messages, hype keywords/emotes
-        """)
 
     with st.expander("Positive"):
         st.write("""
         **Positive but calmer approval / friendliness**
         - Examples (from this dataset): gg, ggs, nice, ty, thanks, thank you, based, wp, awesome, amazing, LOVE YOU
-        - Signs: compliments, gratitude, “good/nice” language; less screaming punctuation than Enthusiastic
+        - Signs: compliments, gratitude, “good/nice” language; supportive wording
         """)
 
     with st.expander("Negative"):
@@ -187,12 +316,6 @@ with st.sidebar:
         - Signs: insults/blame, aggressive profanity, “this sucks” style complaints, accusatory tone, hostile wording
         """)
 
-    with st.expander("Anxious"):
-        st.write("""
-        **Worry / panic / stress (nervous anticipation rather than pure anger)**
-        - Examples (from this dataset): MONKA, monkaS, monkaW, PLEASE, not like this, scared
-        - Signs: panic emotes/keywords, pleading (“PLEASE”), doom-y or fearful wording, tense punctuation (?!?!)
-        """)
 
     with st.expander("Neutral"):
         st.write("""
@@ -201,32 +324,42 @@ with st.sidebar:
         - Signs: greetings, basic questions, observations without strong opinion markers, minimal emotive punctuation
         """)
 
-    with st.expander("Noise"):
-        st.write("""
-        **Low-signal spam / repetition / hard-to-interpret fragments**
-        - Examples (from this dataset): OMEGALUL, KEKW, WAITWAITWAIT WAITWAITWAIT WAITWAITWAIT, OOOOO OOOOO OOOOO,
-          HEAT HEAT HEAT HEAT HEAT, HHHHHHHHHHHH
-        - Signs: repeated tokens, repeated characters, emote-only strings, chant/spam patterns with unclear sentiment
-        """)
 
 # main content
 if not st.session_state.dataset_loaded:
-    st.warning("⚠️ Click '📥 Load Twitch Dataset' in the sidebar to begin!")
+    st.warning("⚠️ Local CSV source could not be loaded.")
 elif not st.session_state.sheet_connected:
     st.warning("⚠️ Click '🔗 Connect to Google Sheets' in the sidebar to sync labels!")
+elif not labeler_name:
+    st.warning("⚠️ Select your name from the sidebar to continue.")
 else:
-    col1, col2 = st.columns([1, 1])
+    labels_df = load_labels_from_sheet(st.session_state.sheet)
+    sheet_source_ids, _, overlap_counts, _ = get_user_sheet_state(labels_df, labeler_name)
+    effective_completed = len(sheet_source_ids.union(st.session_state.session_labeled_ids))
+
+    col1, col2 = st.columns([2, 1])
 
     with col1:
-        if st.button("🔄 Load Random Message", use_container_width=True):
-            if st.session_state.messages:
-                st.session_state.current_message = random.choice(st.session_state.messages)
-                st.session_state.message_index = random.randint(10000, 99999)
+        load_disabled = st.session_state.current_message is not None or effective_completed >= TARGET_PER_USER
+        if st.button("🔄 Load Next Message", use_container_width=True, disabled=load_disabled):
+            next_message, load_error = select_next_message(
+                st.session_state.source_df,
+                labels_df,
+                labeler_name,
+                st.session_state.session_labeled_ids,
+            )
+            if next_message:
+                st.session_state.current_message = next_message["message"]
+                st.session_state.message_index = next_message["source_id"]
+            else:
+                st.warning(load_error or "No eligible message available.")
 
     with col2:
-        if st.button("⏭️ Skip Message", use_container_width=True):
-            st.session_state.current_message = None
-            st.session_state.message_index = None
+        if st.session_state.current_message:
+            st.caption("Submit the current label to continue.")
+        else:
+            remaining = max(TARGET_PER_USER - effective_completed, 0)
+            st.caption(f"Remaining target: {remaining}")
 
     # Load Twitch API credentials from secrets
     twitch_client_id = st.secrets.get("twitch", {}).get("client_id")
@@ -410,6 +543,7 @@ else:
         message_container = st.container(border=True)
         with message_container:
             st.write(f"**ID:** {st.session_state.message_index}")
+            st.caption("Assigned from a different user in the CSV source.")
             # display message with emotes
             emote_html = render_message_with_emotes(st.session_state.current_message)
             st.markdown(emote_html, unsafe_allow_html=True)
@@ -424,7 +558,7 @@ else:
         with col1:
             sentiment = st.selectbox(
                 "Sentiment:",
-                ["Select...", "Enthusiastic", "Noise", "Positive", "Negative", "Neutral", "Anxious"],
+                ["Select...", "Positive", "Negative", "Neutral"],
                 index=0,
                 key="sentiment_select"
             )
@@ -459,7 +593,7 @@ else:
                     ):
                         st.success(
                             f"✅ Labeled as **{sentiment}** (Confidence: {confidence_score}/5) and saved to Google Sheets!")
-                        st.session_state.labeled_count += 1
+                        st.session_state.session_labeled_ids.add(st.session_state.message_index)
                         st.balloons()
 
                         st.session_state.current_message = None
@@ -470,23 +604,32 @@ else:
                 else:
                     st.error("⚠️ Please select both sentiment and confidence!")
     else:
-        if st.session_state.dataset_loaded and st.session_state.sheet_connected:
-            st.info("Click 'Load Random Message' to start labeling!")
+        if st.session_state.dataset_loaded and st.session_state.sheet_connected and labeler_name:
+            st.info("Click 'Load Next Message' to continue labeling.")
 
     # progress tracker
     st.divider()
-    st.markdown("### 📈 Labeling Progress (This Session)")
+    st.markdown("### 📈 Labeling Progress (Persistent)")
 
     col1, col2, col3 = st.columns(3)
+    progress_count = min(effective_completed, TARGET_PER_USER)
     with col1:
-        st.metric("Messages Labeled", st.session_state.labeled_count, "this session")
+        st.metric("Messages Labeled", progress_count)
     with col2:
-        st.metric("Target", 500, "for your team member")
+        st.metric("Target", TARGET_PER_USER, "per user")
     with col3:
-        progress_pct = min((st.session_state.labeled_count / 500) * 100, 100)
+        progress_pct = min((progress_count / TARGET_PER_USER) * 100, 100)
         st.metric("Progress", f"{progress_pct:.1f}%")
 
-    progress_bar = st.progress(min(st.session_state.labeled_count / 500, 1.0))
+    progress_bar = st.progress(min(progress_count / TARGET_PER_USER, 1.0))
+    st.caption(
+        f"Sentiment targets: Negative {SENTIMENT_TARGETS['Negative']}, "
+        f"Neutral {SENTIMENT_TARGETS['Neutral']}, Positive {SENTIMENT_TARGETS['Positive']}"
+    )
+    st.caption(
+        f"Completed: Negative {overlap_counts['Negative']}, "
+        f"Neutral {overlap_counts['Neutral']}, Positive {overlap_counts['Positive']}"
+    )
 
     # show all data from sheet
     st.divider()
@@ -505,7 +648,9 @@ else:
                     st.metric("Total Labels", len(df_all))
                 with col2:
                     if labeler_name:
-                        df_user = df_all[df_all['labeled_by'] == labeler_name]
+                        df_user = df_all[
+                            df_all["labeled_by"].fillna("").astype(str).str.strip().str.lower() == labeler_name.lower()
+                        ]
                         st.metric(f"Your Labels", len(df_user))
                 with col3:
                     st.metric("Team Members", df_all['labeled_by'].nunique())
